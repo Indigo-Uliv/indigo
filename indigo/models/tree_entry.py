@@ -51,7 +51,7 @@ class TreeEntry(Model):
     """TreeEntry model"""
 
     # Partitioned by container, clustered by name, so all files for a directory
-    # are in the same bucket and share the single instance of the (static
+    # are in the same bucket and share the single instance of the static
     # container data
     container = columns.Text(partition_key=True)
     name = columns.Text(primary_key=True, partition_key=False)
