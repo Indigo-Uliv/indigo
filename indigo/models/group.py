@@ -22,8 +22,8 @@ limitations under the License.
 # of users
 
 
-from cassandra.cqlengine import columns
-from cassandra.cqlengine.models import Model
+from dse.cqlengine import columns
+from dse.cqlengine.models import Model
 import json
 
 from indigo.models.errors import GroupConflictError
@@ -154,7 +154,7 @@ class Group(Model):
         """Remove a list of users from the group
         Return 3 lists:
             removed for the username who were removed
-            not_there for the username who weren't in the gr
+            not_there for the username who weren't in the group
             not_exist for the usernames who doesn't exist"""
         from indigo.models import User
         not_exist = []

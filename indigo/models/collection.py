@@ -16,13 +16,24 @@ limitations under the License.
 """
 
 from datetime import datetime
-from cassandra.cqlengine import connection
-from cassandra.query import SimpleStatement
+from dse.cqlengine import connection
+from dse.query import SimpleStatement
 import json
 
-from indigo import get_config
+from indigo import (
+    RESERVED_META,
+    get_config
+)
+from indigo.util_graph import (
+    get_graph_session,
+    gq_add_vertex_collection,
+    gq_get_metadata_collection,
+    gq_get_vertex_collection,
+    gq_get_vertex_user,
+)
 from indigo.models import (
-    TreeEntry
+    TreeEntry,
+    User
 )
 from indigo.models.acl import (
     acemask_to_str,
@@ -65,6 +76,21 @@ class Collection(object):
 
 
     @classmethod
+    def check_graph_root(cls):
+        """Return True if the root vertex does exist"""
+        root = Collection.find("/")
+        session = get_graph_session()
+        query = gq_get_vertex_collection(root)
+        rset = session.execute_graph("v_root = {};".format(query))
+        
+        try:
+            root = next(rset.current_rows)
+            return True
+        except StopIteration:
+            return False
+
+
+    @classmethod
     def create(cls, name, container='/', metadata=None, username=None):
         """Create a new collection"""
         from indigo.models import Notification
@@ -81,15 +107,15 @@ class Collection(object):
         if collection is not None:
             raise CollectionConflictError(container)
         now = datetime.now()
-        # If we try to create a tree enry with no metadata, cassandra-driver
+        # If we try to create a tree entry with no metadata, cassandra-driver
         # will fail as it tries to delete a static column
         if metadata:
-            metadata = meta_cdmi_to_cassandra(metadata)
+            metadata_cass = meta_cdmi_to_cassandra(metadata)
             coll_entry = TreeEntry.create(container=path,
                                           name='.',
                                           container_create_ts=now,
                                           container_modified_ts=now,
-                                          container_metadata=metadata)
+                                          container_metadata=metadata_cass)
         else:
             coll_entry = TreeEntry.create(container=path,
                                           name='.',
@@ -99,7 +125,38 @@ class Collection(object):
         child_entry = TreeEntry.create(container=container,
                                        name=name + '/',
                                        uuid=coll_entry.container_uuid)
+        
         new = Collection.find(path)
+        
+        add_user_edge = ""
+        if username:
+            user = User.find(username)
+            if user:
+                add_user_edge = """v_user = {}.next();
+                                   v_user.addEdge('owns', v_new);
+                                   """.format(gq_get_vertex_user(user))
+        else:
+            add_user_edge = ""
+        
+        print """v_parent = {}.next();
+                                 v_new = {};
+                                 v_parent.addEdge('son', v_new);
+                                 {}
+                                 """.format(gq_get_vertex_collection(parent),
+                                            gq_add_vertex_collection(new),
+                                            add_user_edge)
+        session = get_graph_session()
+        session.execute_graph("""v_parent = {}.next();
+                                 v_new = {};
+                                 v_parent.addEdge('son', v_new);
+                                 {}
+                                 """.format(gq_get_vertex_collection(parent),
+                                            gq_add_vertex_collection(new),
+                                            add_user_edge)
+                             )
+        if metadata:
+            new.update_graph(metadata)
+
         state = new.mqtt_get_state()
         payload = new.mqtt_payload({}, state)
         Notification.create_collection(username, path, payload)
@@ -108,16 +165,11 @@ class Collection(object):
         return new
 
 
-    def create_acl_list(self, read_access, write_access):
-        """Create ACL in the tree entry table from two lists of groups id,
-        existing ACL are replaced"""
-        self.entry.create_container_acl_list(read_access, write_access)
-
-
-    def create_acl_cdmi(self, cdmi_acl):
-        """Create ACL in the tree entry table from ACL in the cdmi format (list
-        of ACE dictionary), existing ACL are replaced"""
-        self.entry.create_container_acl_cdmi(cdmi_acl)
+    @classmethod
+    def create_graph_root(cls, root_entry):
+        """Create the vertex for the root in the graph store"""
+        session = get_graph_session()
+        session.execute_graph(gq_add_vertex_collection(root_entry))
 
 
     @classmethod
@@ -130,29 +182,11 @@ class Collection(object):
                                       container_modified_ts=now)
         root_entry.update(uuid=root_entry.container_uuid)
         root_entry.add_default_acl()
-        return root_entry
-
-
-    def delete(self, username=None):
-        """Delete a collection and the associated row in the tree entry table"""
-        from indigo.models import Notification
-        if self.is_root:
-            return
-        cfg = get_config(None)
-        session = connection.get_session()
-        keyspace = cfg.get('KEYSPACE', 'indigo')
-        session.set_keyspace(keyspace)
-        query = SimpleStatement("""DELETE FROM tree_entry WHERE container=%s""")
-        session.execute(query, (self.path,))
-        # Get the row that describe the collection as a child of its parent
-        child = TreeEntry.objects.filter(container=self.container,
-                                           name=u"{}/".format(self.name)).first()
-        if child:
-            child.delete()
-        state = self.mqtt_get_state()
-        payload = self.mqtt_payload(state, {})
-        Notification.delete_collection(username, self.path, payload)
-        self.reset()
+        
+        root = cls(root_entry)
+        cls.create_graph_root(root)
+        
+        return root
 
 
     @classmethod
@@ -182,6 +216,59 @@ class Collection(object):
             return None
         else:
             return cls(entries.first())
+
+    @classmethod
+    def get_root(cls):
+        """Return the root collection, Create it if it doesn't exist"""
+        root = Collection.find("/")
+        if not root:
+            Collection.create_root()
+        else:
+            # Root exists in Cassandra, we check that the corresponding
+            # vertex also exists in the graph
+            if not Collection.check_graph_root():
+                Collection.create_graph_root(root)
+        return root
+
+
+    def create_acl_list(self, read_access, write_access):
+        """Create ACL in the tree entry table from two lists of groups id,
+        existing ACL are replaced"""
+        self.entry.create_container_acl_list(read_access, write_access)
+
+
+    def create_acl_cdmi(self, cdmi_acl):
+        """Create ACL in the tree entry table from ACL in the cdmi format (list
+        of ACE dictionary), existing ACL are replaced"""
+        self.entry.create_container_acl_cdmi(cdmi_acl)
+
+
+    def delete(self, username=None):
+        """Delete a collection and the associated row in the tree entry table"""
+        from indigo.models import Notification
+        if self.is_root:
+            return
+        cfg = get_config(None)
+        session = connection.get_session()
+        keyspace = cfg.get('KEYSPACE', 'indigo')
+        session.set_keyspace(keyspace)
+        query = SimpleStatement("""DELETE FROM tree_entry WHERE container=%s""")
+        session.execute(query, (self.path,))
+        # Get the row that describe the collection as a child of its parent
+        child = TreeEntry.objects.filter(container=self.container,
+                                           name=u"{}/".format(self.name)).first()
+        if child:
+            child.delete()
+        
+        session = get_graph_session()
+        session.execute_graph("""v_coll = {}.drop();
+                                 """.format(gq_get_vertex_collection(self))
+                             )
+        
+        state = self.mqtt_get_state()
+        payload = self.mqtt_payload(state, {})
+        Notification.delete_collection(username, self.path, payload)
+        self.reset()
 
 
     def get_acl(self):
@@ -266,6 +353,16 @@ class Collection(object):
         return meta_cassandra_to_cdmi(self.entry.container_metadata)
 
 
+    def get_graph_metadata(self):
+        """Return a dictionary of metadata stored in the graph"""
+        session = get_graph_session()
+        result = session.execute_graph(gq_get_metadata_collection(self))
+        return { r['label']:r['value'] 
+                 for r in result 
+                 if r['label'] not in RESERVED_META
+               }
+
+
     def get_list_metadata(self):
         """Transform metadata to a list of couples for web ui"""
         return metadata_to_list(self.entry.container_metadata)
@@ -303,6 +400,7 @@ class Collection(object):
         from indigo.models import SearchIndex
         SearchIndex.reset(self.path)
 
+
     def to_dict(self, user=None):
         """Return a dictionary which describes a collection for the web ui"""
         data = {
@@ -330,6 +428,7 @@ class Collection(object):
             # Transform the metadata in cdmi format to the format stored in
             # Cassandra
             metadata = meta_cdmi_to_cassandra(kwargs['metadata'])
+            self.update_graph(kwargs['metadata'])
             kwargs['container_metadata'] = metadata
             del kwargs['metadata']
         if 'username' in kwargs:
@@ -355,6 +454,40 @@ class Collection(object):
         """Update ACL in the tree entry table from ACL in the cdmi format (list
         of ACE dictionary), existing ACL are replaced"""
         self.entry.update_container_acl_cdmi(cdmi_acl)
+
+
+    def update_graph(self, metadata):
+        """Get the new metadata and store them in the graph as properties"""
+        session = get_graph_session()
+        gq_coll = gq_get_vertex_collection(self)
+        
+        # old_meta stores the metadata present in the graph before updating
+        old_meta = self.get_graph_metadata()
+        # new_meta stores the set of final metadata we want
+        new_meta = metadata
+        
+        old_meta_keys = set(old_meta.keys())
+        new_meta_keys = set(new_meta.keys())
+        
+        # Delete metadata present in old but not in new
+        for meta_to_delete in old_meta_keys.difference(new_meta_keys):
+            session.execute_graph("""{}.properties('{}').drop()""".format(
+                gq_coll,
+                meta_to_delete))
+        
+        # Update metadata present in both old and new (check if value changed ?)
+        for meta_to_update in old_meta_keys.intersection(new_meta_keys):
+            session.execute_graph("""{}.property('{}', '{}')""".format(
+                gq_coll,
+                meta_to_update,
+                new_meta[meta_to_update]))
+        
+        # Add metadata present in new but not in old
+        for meta_to_add in new_meta_keys.difference(old_meta_keys):
+            session.execute_graph("""{}.property('{}', '{}')""".format(
+                gq_coll,
+                meta_to_add,
+                new_meta[meta_to_add]))
 
 
     def user_can(self, user, action):

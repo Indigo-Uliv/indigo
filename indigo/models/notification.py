@@ -19,12 +19,12 @@ limitations under the License.
 import json
 import paho.mqtt.publish as publish
 import logging
-from cassandra.cqlengine import columns
-from cassandra.cqlengine.models import (
+from dse.cqlengine import columns
+from dse.cqlengine.models import (
     connection,
     Model
     )
-from cassandra.query import SimpleStatement
+from dse.query import SimpleStatement
 from indigo import get_config
 from indigo.util import (
     default_time,

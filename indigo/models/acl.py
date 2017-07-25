@@ -23,8 +23,8 @@ limitations under the License.
 #             ("READ_ACL, READ_ATTRIBUTES", ..)
 
 from collections import OrderedDict
-from cassandra.cqlengine.usertype import UserType
-from cassandra.cqlengine import columns
+from dse.cqlengine.usertype import UserType
+from dse.cqlengine import columns
 
 from indigo.models import (
     Group

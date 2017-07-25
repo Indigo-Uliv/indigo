@@ -19,9 +19,22 @@ from datetime import datetime
 import logging
 import json
 
+from indigo import (
+    RESERVED_META
+)
+
 from indigo.models import (
     DataObject,
-    TreeEntry
+    TreeEntry,
+    User
+)
+from indigo.util_graph import (
+    get_graph_session,
+    gq_add_vertex_resource,
+    gq_get_metadata_resource,
+    gq_get_vertex_collection,
+    gq_get_vertex_resource,
+    gq_get_vertex_user,
 )
 from indigo.models.acl import (
     acemask_to_str,
@@ -85,13 +98,17 @@ class Resource(object):
         """Create a new resource in the tree_entry table"""
         from indigo.models import Collection
         from indigo.models import Notification
+        # Check if parent collection exists
+        parent = Collection.find(container)
+        if parent is None:
+            raise NoSuchCollectionError(container)
         if uuid is None:
             uuid = default_cdmi_id()
         create_ts = datetime.now()
         modified_ts = create_ts
         path = merge(container, name)
         if metadata:
-            metadata = meta_cdmi_to_cassandra(metadata)
+            metadata_cass = meta_cdmi_to_cassandra(metadata)
         # Check the container exists
         collection = Collection.find(container)
         if not collection:
@@ -111,13 +128,13 @@ class Resource(object):
             kwargs["modified_ts"] = modified_ts
             kwargs["mimetype"] = mimetype
             if metadata:
-                kwargs["metadata"] = meta_cdmi_to_cassandra(metadata)
+                kwargs["metadata"] = metadata_cass
         else:
             obj_id = url.replace("cassandra://", "")
             data_obj = DataObject.find(obj_id)
             if metadata:
                 data_obj.update(mimetype=mimetype,
-                                metadata=metadata)
+                                metadata=metadata_cass)
             else:
                 if mimetype:
                     data_obj.update(mimetype=mimetype)
@@ -126,6 +143,30 @@ class Resource(object):
 
         data_entry = TreeEntry.create(**kwargs)
         new = Resource(data_entry)
+
+        session = get_graph_session()
+        
+        add_user_edge = ""
+        if username:
+            user = User.find(username)
+            if user:
+                add_user_edge = """v_user = {}.next();
+                                   v_user.addEdge('owns', v_new);
+                                   """.format(gq_get_vertex_user(user))
+        else:
+            add_user_edge = ""
+
+        session.execute_graph("""v_parent = {}.next();
+                                 v_new = {};
+                                 v_parent.addEdge('son', v_new);
+                                 {}
+                                 """.format(gq_get_vertex_collection(parent),
+                                            gq_add_vertex_resource(new),
+                                            add_user_edge)
+                             )
+        if metadata:
+            new.update_graph(metadata)
+
         state = new.mqtt_get_state()
         payload = new.mqtt_payload({}, state)
         Notification.create_resource(username, path, payload)
@@ -156,6 +197,13 @@ class Resource(object):
         from indigo.models import Notification
         self.delete_blobs()
         self.entry.delete()
+        
+        session = get_graph_session()
+        session.execute_graph("""v_resc = {}.drop();
+                                 """.format(gq_get_vertex_resource(self))
+                             )
+        
+        
         state = self.mqtt_get_state()
         payload = self.mqtt_payload(state, {})
         Notification.delete_resource(username, self.path, payload)
@@ -276,6 +324,17 @@ class Resource(object):
                 if self.obj is None:
                     return self.entry.create_ts
             return self.obj.create_ts
+
+
+    def get_graph_metadata(self):
+        """Return a dictionary of metadata stored in the graph"""
+        session = get_graph_session()
+        result = session.execute_graph(gq_get_metadata_resource(self))
+        return { r['label']:r['value'] 
+                 for r in result 
+                 if r['label'] not in RESERVED_META
+               }
+
 
 
     def get_list_metadata(self):
@@ -434,14 +493,15 @@ class Resource(object):
         print kwargs
         
         # user_uuid used for Notification
-        if 'user_uuid' in kwargs:
-            user_uuid = kwargs['user_uuid']
-            del kwargs['user_uuid']
+        if 'username' in kwargs:
+            username = kwargs['username']
+            del kwargs['username']
         else:
-            user_uuid = None
+            username = None
 
         # Metadata given in cdmi format are transformed to be stored in Cassandra
         if 'metadata' in kwargs:
+            self.update_graph(kwargs['metadata'])
             kwargs['metadata'] = meta_cdmi_to_cassandra(kwargs['metadata'])
 
         if self.is_reference:
@@ -455,7 +515,7 @@ class Resource(object):
         resc = Resource.find(self.path)
         post_state = resc.mqtt_get_state()
         payload = resc.mqtt_payload(pre_state, post_state)
-        Notification.update_resource(user_uuid, resc.path, payload)
+        Notification.update_resource(username, resc.path, payload)
 
         # Index the resource
         resc.index()
@@ -477,6 +537,40 @@ class Resource(object):
         else:
             if self.obj:
                 self.obj.update_acl_cdmi(read_access, write_access)
+
+
+    def update_graph(self, metadata):
+        """Get the new metadata and store them in the graph as properties"""
+        session = get_graph_session()
+        gq_resc = gq_get_vertex_resource(self)
+        
+        # old_meta stores the metadata present in the graph before updating
+        old_meta = self.get_graph_metadata()
+        # new_meta stores the set of final metadata we want
+        new_meta = metadata
+        
+        old_meta_keys = set(old_meta.keys())
+        new_meta_keys = set(new_meta.keys())
+        
+        # Delete metadata present in old but not in new
+        for meta_to_delete in old_meta_keys.difference(new_meta_keys):
+            session.execute_graph("""{}.properties('{}').drop()""".format(
+                gq_resc,
+                meta_to_delete))
+        
+        # Update metadata present in both old and new (check if value changed ?)
+        for meta_to_update in old_meta_keys.intersection(new_meta_keys):
+            session.execute_graph("""{}.property('{}', '{}')""".format(
+                gq_resc,
+                meta_to_update,
+                new_meta[meta_to_update]))
+        
+        # Add metadata present in new but not in old
+        for meta_to_add in new_meta_keys.difference(old_meta_keys):
+            session.execute_graph("""{}.property('{}', '{}')""".format(
+                gq_resc,
+                meta_to_add,
+                new_meta[meta_to_add]))
 
 
     def user_can(self, user, action):

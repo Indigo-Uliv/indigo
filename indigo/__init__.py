@@ -20,6 +20,16 @@ import importlib
 
 from indigo.util import memoized
 
+__version__ = '1.2'
+
+
+RESERVED_META = ['name',
+                 'uuid',
+                 'size',
+                 'mimetype',
+                 'create_ts',
+                 'modified_ts']
+
 
 @memoized
 def get_config(module_name=None):
@@ -42,3 +52,6 @@ def get_config(module_name=None):
         config[key] = val
 
     return config
+
+
+

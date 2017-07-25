@@ -18,8 +18,8 @@ limitations under the License.
 """
 
 
-from cassandra.cqlengine import columns
-from cassandra.cqlengine.models import Model
+from dse.cqlengine import columns
+from dse.cqlengine.models import Model
 
 
 

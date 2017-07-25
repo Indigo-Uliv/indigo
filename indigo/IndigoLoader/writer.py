@@ -21,7 +21,7 @@ import os
 from collections import OrderedDict
 from os.path import abspath
 
-from cassandra.cqlengine.query import BatchQuery
+from dse.cqlengine.query import BatchQuery
 from indigo.models.blob import BlobPart
 from indigo.models.blob import Blob
 from indigo.models.collection import Collection

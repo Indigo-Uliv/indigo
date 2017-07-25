@@ -18,14 +18,14 @@ limitations under the License.
 
 import json
 import logging
-from cassandra.cqlengine import columns
-from cassandra.cqlengine.models import (
+from dse.cqlengine import columns
+from dse.cqlengine.models import (
     connection,
     Model
     )
-from cassandra.util import uuid_from_time
-from cassandra.util import datetime_from_uuid1
-from cassandra.query import SimpleStatement
+from dse.util import uuid_from_time
+from dse.util import datetime_from_uuid1
+from dse.query import SimpleStatement
 
 from indigo import get_config
 from indigo.util import (

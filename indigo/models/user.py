@@ -16,8 +16,8 @@ limitations under the License.
 """
 
 
-from cassandra.cqlengine import columns
-from cassandra.cqlengine.models import Model
+from dse.cqlengine import columns
+from dse.cqlengine.models import Model
 from passlib.hash import pbkdf2_sha256
 import json
 
@@ -27,6 +27,10 @@ from indigo.util import (
     datetime_serializer,
     default_uuid,
     log_with,
+)
+from indigo.util_graph import (
+    get_graph_session,
+    gq_add_vertex_user,
 )
 
 
@@ -82,6 +86,13 @@ class User(Model):
         # return super(User, cls).create(**kwargs)
         user = User(**kwargs)
         user.save()
+        
+        session = get_graph_session()
+        print """v_new = {}""".format(gq_add_vertex_user(user))
+                             
+        session.execute_graph("""v_new = {}""".format(gq_add_vertex_user(user))
+                             )
+        
         state = user.mqtt_get_state()
         payload = user.mqtt_payload({}, state)
         # username is the id of the user who did the operation

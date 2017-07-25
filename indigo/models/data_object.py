@@ -18,12 +18,12 @@ limitations under the License.
 from cStringIO import StringIO
 import zipfile
 from datetime import datetime
-from cassandra.cqlengine import (
+from dse.cqlengine import (
     columns,
     connection
 )
-from cassandra.query import SimpleStatement
-from cassandra.cqlengine.models import Model
+from dse.query import SimpleStatement
+from dse.cqlengine.models import Model
 
 from indigo import get_config
 from indigo.models import (
@@ -96,8 +96,17 @@ class DataObject(Model):
     #####################
 
     @classmethod
-    def append_chunk(cls, uuid, data, sequence_number, compressed=False):
+    def append_chunk(cls, uuid, raw_data, sequence_number, compressed=False):
         """Create a new blob for an existing data_object"""
+        if compressed:
+            f = StringIO()
+            z = zipfile.ZipFile(f, "w", zipfile.ZIP_DEFLATED)
+            z.writestr("data", raw_data)
+            z.close()
+            data = f.getvalue()
+            f.close()
+        else:
+            data = raw_data
         data_object = cls(uuid=uuid,
                           sequence_number=sequence_number,
                           blob=data,
@@ -126,10 +135,20 @@ class DataObject(Model):
 
 
     @classmethod
-    def create(cls, data, compressed=False, metadata=None, create_ts=None, acl=None):
+    def create(cls, raw_data, compressed=False, metadata=None, create_ts=None, acl=None):
         """data: initial data"""
         new_id = default_cdmi_id()
         now = datetime.now()
+        if compressed:
+            f = StringIO()
+            z = zipfile.ZipFile(f, "w", zipfile.ZIP_DEFLATED)
+            z.writestr("data", raw_data)
+            z.close()
+            data = f.getvalue()
+            f.close()
+        else:
+            data = raw_data
+        
         kwargs = {
             "uuid": new_id,
             "sequence_number": 0,
@@ -206,9 +225,11 @@ class DataObject(Model):
                     WHERE uuid=%s""".format(arg))
                 session.execute(query, (kwargs[arg], self.uuid))
             else:
+                print """UPDATE data_object SET {}=%s
+                    WHERE uuid=%s and sequence_number=%s""".format(arg)
                 query = SimpleStatement("""UPDATE data_object SET {}=%s
                     WHERE uuid=%s and sequence_number=%s""".format(arg))
-                session.execute(query, (kwargs[arg], self.container, self.sequence_number))
+                session.execute(query, (kwargs[arg], self.uuid, self.sequence_number))
         return self
 
 

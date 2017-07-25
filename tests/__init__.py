@@ -1,5 +1,5 @@
 from indigo.models import initialise, sync
-from cassandra.cqlengine.management import drop_keyspace
+from dse.cqlengine.management import drop_keyspace
 
 TEST_KEYSPACE="indigo_test"
 

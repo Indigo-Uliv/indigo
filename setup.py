@@ -16,15 +16,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 """
-import inspect
-import os
+
 from distutils.core import setup
-from setuptools import setup, find_packages
+from setuptools import setup
+
+import indigo
 
 
 setup(
     name='indigo',
-    version="1.1",
+    version=indigo.__version__,
     description='Indigo core library',
     extras_require={},
     long_description="Core library for Indigo development",
@@ -32,17 +33,9 @@ setup(
     maintainer_email='@archiveanalytics.com',
     license="Apache License, Version 2.0",
     url='https://bitbucket.org/archivea/libindigo',
-    install_requires=[
-        "cassandra-driver==3.6.0",
-        "passlib==1.6.2",
-        "nose==1.3.6",
-        "blist==1.3.6",
-        "requests==2.7.0",
-        "crcmod==1.7"
-    ],
     entry_points={
         'console_scripts': [
-            "indigo = indigo.cli:main"
+            "iadmin = indigo.cli:main"
         ],
     },
     classifiers=[

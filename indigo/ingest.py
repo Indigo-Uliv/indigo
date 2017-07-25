@@ -23,18 +23,24 @@ from threading import Thread
 from mimetypes import guess_type
 from Queue import Queue
 
-from cassandra.cqlengine.query import BatchQuery
+from dse.cqlengine.query import BatchQuery
 
 from indigo.models.search import SearchIndex
-from indigo.models import User
-from indigo.models import Group
-#from indigo.models.collection import Collection
-#from indigo.models.resource import Resource
+from indigo.models import (
+    Collection,
+    DataObject,
+    Group,
+    Resource,
+    User
+)
 from indigo.models.errors import (
     CollectionConflictError,
     ResourceConflictError
 )
-from indigo.util import split
+from indigo.util import (
+    merge,
+    split
+    )
 import log
 
 logger = log.init_log('ingest')
@@ -53,56 +59,52 @@ def decode_str(s):
             return s_ignore
 
 
+def local_file_dict(path):
+    """Return a dictionary with the information guessed from the file on the
+    filesystem"""
+    t, _ = guess_type(path)
+    _, name = split(path)
+    _, ext = os.path.splitext(path)
+    return {"mimetype": t,
+            "size": os.path.getsize(path),
+            "name": name,
+            "type": ext[1:].upper(),
+            }
+
+
+def read_in_chunks(file_object, chunk_size=1048576):
+    """Lazy function (generator) to read a file piece by piece.
+    Default chunk size: 1 Mb."""
+    while True:
+        data = file_object.read(chunk_size)
+        if not data:
+            break
+        yield data
+
 logger.setLevel(logging.WARNING)
 
 
-# noinspection PyUnusedLocal
-def do_ingest(cfg, args):
-    if not args.user or not args.group or not args.folder:
-        msg = "Group, User and Folder are all required for ingesting data"
-        logger.error(msg)
-        print msg
-        sys.exit(1)
 
-    # Check validity of the arguments (do user/group and folder)
-    # actually exist.
-    user = User.find(args.user)
-    if not user:
-        msg = u"User '{}' not found".format(args.user)
-        logger.error(msg)
-        print msg
-        sys.exit(1)
-
-    group = Group.find(args.group)
-    if not group:
-        msg = u"Group '{}' not found".format(args.group)
-        logger.error(msg)
-        print msg
-        sys.exit(1)
-
-    path = os.path.abspath(args.folder)
-    if not os.path.exists(path):
-        msg = u"Could not find path {}".format(path)
-        logger.error(msg)
-        print msg
-
-    include_pattern = args.include
-
-    local_ip = args.local_ip
-    skip_import = args.no_import
-
-    ingester = Ingester(user, group, path, local_ip=local_ip, skip_import=skip_import, include_pattern=include_pattern)
+def do_ingest(user, group, path, include_pattern=None, local_ip=None,
+              is_reference=None, compress=True):
+    ingester = Ingester(user, group, path, local_ip=local_ip, 
+                        is_reference=is_reference, 
+                        include_pattern=include_pattern,
+                        compress=compress)
     ingester.start()
 
 
 class Ingester(object):
 
-    def __init__(self, user, group, folder, local_ip='127.0.0.1', skip_import=False, include_pattern=None):
+
+    def __init__(self, user, group, folder, local_ip='127.0.0.1', 
+                 is_reference=False, include_pattern=None, compress=True):
         self.groups = [group.uuid]
         self.user = user
         self.folder = folder
         self.collection_cache = {}
-        self.skip_import = skip_import
+        self.is_reference = is_reference
+        self.compress = compress
         if local_ip:
             self.local_ip = local_ip
         else:
@@ -113,46 +115,33 @@ class Ingester(object):
             self.include_pattern = None
         self.queue = None
 
+
     def create_collection(self, parent_path, name, path):
         try:
-            d = {'container': parent_path,
-                 'name': name,
-                 'write_access': self.groups,
-                 'delete_access': self.groups,
-                 'edit_access': self.groups,
-                 }
-            c = Collection.create(**d)
+            c = Collection.create(name,
+                                  container=parent_path,
+                                  metadata=None,
+                                  username=self.user.name)
+            c.create_acl_list(self.groups, self.groups)
         except CollectionConflictError:
             # Collection already exists
-            c = Collection.find_by_path(path)
+            c = Collection.find(path)
         self.collection_cache[path] = c
         return c
+
 
     def get_collection(self, path):
         c = self.collection_cache.get(path, None)
         if c:
             return c
 
-        c = Collection.find_by_path(path)
+        c = Collection.find(path)
         if c:
             self.collection_cache[path] = c
             return c
 
         return None
 
-    def resource_for_file(self, path):
-        t, _ = guess_type(path)
-        _, name = split(path)
-        _, ext = os.path.splitext(path)
-        return {"mimetype": t,
-                "size": os.path.getsize(path),
-                # "read_access": self.groups,
-                "write_access": self.groups,
-                "delete_access": self.groups,
-                "edit_access": self.groups,
-                "name": name,
-                "type": ext[1:].upper(),
-                }
 
     def start(self):
         """Walks the folder creating collections when it finds a folder,
@@ -164,9 +153,11 @@ class Ingester(object):
         self.do_work()
         terminate_threading(self.queue)
 
-    def create_entry(self, rdict, context, do_load):
-        self.queue.put((rdict.copy(), context.copy(), do_load))
+
+    def create_entry(self, resc_dict, context, is_reference):
+        self.queue.put((resc_dict.copy(), context.copy(), is_reference))
         return
+    
 
     def do_work(self):
         # if self.include_pattern:
@@ -177,16 +168,12 @@ class Ingester(object):
 
         timer = TimerCounter()
 
-        root_collection = Collection.get_root_collection()
-
-        if not root_collection:
-            root_collection = Collection.create_root()
+        root_collection = Collection.get_root()
 
         self.collection_cache["/"] = root_collection
 
         t0 = time.time()
         if self.include_pattern:
-            print self.include_pattern
             start_dir = None
             for (path, dirs, files) in os.walk(self.folder, topdown=True, followlinks=True):
                 for k in dirs:
@@ -209,7 +196,6 @@ class Ingester(object):
                 continue  # Ignore .paths
 
             path = path.replace(self.folder, '')
-
             parent_path, name = split(path)
 
             t1 = time.time()
@@ -224,7 +210,7 @@ class Ingester(object):
 
                 current_collection = self.get_collection(path)
                 if not current_collection:
-                    current_collection = self.create_collection(parent_path,  # parent.path(),
+                    current_collection = self.create_collection(parent_path,  # parent.path,
                                                                 name,
                                                                 path)
                 timer.exit('get-collection')
@@ -232,28 +218,33 @@ class Ingester(object):
                 current_collection = root_collection
 
             # Now we can add the resources from self.folder + path
-            for entry in files:
-                fullpath = self.folder + path + '/' + entry
-                if entry.startswith("."):
+            for filename in files:
+                fullpath = self.folder + path + '/' + filename
+                if filename.startswith("."):
                     continue
-
-                if entry.endswith(SKIP):
+  
+                if filename.endswith(SKIP):
                     continue
-
+  
                 if not os.path.isfile(fullpath):
                     continue
 
-                rdict = self.resource_for_file(fullpath)
-                rdict["container"] = current_collection.path()
+                # Extract information needed to create the new resources
+                resc_dict = local_file_dict(fullpath)
+                resc_dict["read_access"] = self.groups
+                resc_dict["write_access"] = self.groups
+                resc_dict["container"] = current_collection.path
+                resc_dict['compress'] = self.compress
+                
+                context = {"fullpath": fullpath,
+                           "local_ip": self.local_ip,
+                           "path": path,
+                           "filename": filename,
+                           "user":self.user.name
+                          }
+                
                 timer.enter('push')
-                self.create_entry(rdict,
-                                  {"fullpath": fullpath,
-                                   "container": current_collection.path(),
-                                   "local_ip": self.local_ip,
-                                   "path": path,
-                                   "entry": entry
-                                   },
-                                  not self.skip_import)
+                self.create_entry(resc_dict, context, self.is_reference)
                 timer.exit('push')
 
         timer.summary()
@@ -282,38 +273,56 @@ class ThreadClass(Thread):
         Thread.__init__(self)
         self.queue = q
 
+
     def run(self):
         while True:
             args = self.queue.get()
             self.process_create_entry(*args)
             self.queue.task_done()
 
-    def process_create_entry_work(self, rdict, context, do_load):
-        b = BatchQuery()
+
+    def process_create_entry_work(self, resc_dict, context, is_reference):
         # MOSTLY the resource will not exist... so start by calculating the URL and trying to insert the entire record..
-        if not do_load:
+        if is_reference:
             url = "file://{}{}/{}".format(context['local_ip'],
                                           context['path'],
                                           context['entry'])
         else:
             with open(context['fullpath'], 'r') as f:
-                blob = Blob.create_from_file(f, rdict['size'])
-                if blob:
-                    url = "cassandra://{}".format(blob.id)
+                seq_number = 0
+                data_uuid = None
+                
+                for chk in read_in_chunks(f):
+                    if seq_number == 0:
+                        data_object = DataObject.create(chk, resc_dict['compress'])
+                        data_uuid = data_object.uuid
+                    else:
+                        DataObject.append_chunk(data_uuid, chk, seq_number, resc_dict['compress'])
+                    seq_number += 1
+                if data_uuid:
+                    url = "cassandra://{}".format(data_uuid)
                 else:
                     return None
 
         try:
             # OK -- try to insert ( create ) the record...
             t1 = time.time()
-            resource = Resource.batch(b).create(url=url, **rdict)
+            
+            resource = Resource.create(container=resc_dict['container'],
+                                       name=resc_dict['name'],
+                                       url=url,
+                                       mimetype=resc_dict['mimetype'],
+                                       username=context['user'],
+                                       size=resc_dict['size'])
+            resource.create_acl_list(resc_dict['read_access'], resc_dict['write_access'])
+            
             msg = 'Resource {} created --> {}'.format(resource.get_name(),
                                                       time.time() - t1)
             logger.info(msg)
         except ResourceConflictError:
             # If the create fails, the record already exists... so retrieve it...
             t1 = time.time()
-            resource = Resource.objects().get(container=context['collection'], name=rdict['name'])
+            resource = Resource.find(merge(resc_dict['container'], resc_dict['name']))
             msg = "{} ::: Fetch Object -> {}".format(resource.get_name(), time.time() - t1)
             logger.info(msg)
 
@@ -323,7 +332,7 @@ class ThreadClass(Thread):
         if resource.url != url:
             t2 = time.time()
             # if url.startswith('cassandra://') : tidy up the stored block count...
-            resource.batch(b).update(url=url)
+            resource.update(url=url)
             t3 = time.time()
             msg = "{} ::: update -> {}".format(resource.get_name(), t3 - t2)
             logger.info(msg)
@@ -334,16 +343,15 @@ class ThreadClass(Thread):
 
         # msg = "Index Management -> {}".format(time.time() - t1)
         # logger.info(msg)
-        b.execute()
 
-    def process_create_entry(self, rdict, context, do_load):
+    def process_create_entry(self, resc_dict, context, is_reference):
         retries = 4
         while retries > 0:
             try:
-                return self.process_create_entry_work(rdict, context, do_load)
+                return self.process_create_entry_work(resc_dict, context, is_reference)
             except Exception as e:
-                logger.error("Problem creating entry: {}/{}, retry number: {} - {}".format(rdict['name'],
-                                                                                           rdict['container'],
+                logger.error("Problem creating entry: {}/{}, retry number: {} - {}".format(resc_dict['name'],
+                                                                                           resc_dict['container'],
                                                                                            retries,
                                                                                            e))
                 retries -= 1

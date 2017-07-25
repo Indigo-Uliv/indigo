@@ -1,0 +1,7 @@
+dse-driver==2.0.0
+dse-graph==1.0.0
+passlib==1.6.2
+crcmod==1.7
+blessings
+docopt
+paho-mqtt==1.1

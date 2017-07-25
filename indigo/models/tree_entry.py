@@ -15,9 +15,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from cassandra.cqlengine.models import Model
-from cassandra.query import SimpleStatement
-from cassandra.cqlengine import (
+from dse.cqlengine.models import Model
+from dse.query import SimpleStatement
+from dse.cqlengine import (
     columns,
     connection
 )

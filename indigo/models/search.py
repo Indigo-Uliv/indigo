@@ -24,8 +24,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from cassandra.cqlengine import columns
-from cassandra.cqlengine.models import Model
+from dse.cqlengine import columns
+from dse.cqlengine.models import Model
 import logging
 
 from indigo.util import default_uuid

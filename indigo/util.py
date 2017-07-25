@@ -29,7 +29,8 @@ from datetime import (
 )
 from time import time as timestamp
 import logging
-from cassandra.util import uuid_from_time
+from dse.util import uuid_from_time
+
 
 from indigo.log import init_log
 
@@ -419,7 +420,3 @@ def split(path):
     coll_name = os.path.dirname(path)
     resc_name = os.path.basename(path)
     return tuple((coll_name, resc_name))
-
-
-
-
