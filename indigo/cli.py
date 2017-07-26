@@ -30,18 +30,16 @@ Usage:
   iadmin atg <name> <userlist> ...
   iadmin rfg <name> <userlist> ...
   iadmin rmgroup [<name>]
-  iadmin ingest <user> <group> <path> [--reference --localip <ip> --include <expr> --no-compress]
+  iadmin ingest <user> <group> <path> [--reference --localip <ip> --include <expr> --no-compress] 
 
 Options:
-  -h --help     Show this screen.
-  --version     Show version.
-  --reference   Set if we do not want to import the files into Cassandra
-  --localip     Specify the IP address for this machine (subnets/private etc)
-  --include     include ONLY paths that include this string
-  --no-compress by default compress data when uploaded in Cassandra, set to disable compression
-
+  -h --help      Show this screen.
+  --version      Show version.
+  --reference    Set if we do not want to import the files into Cassandra
+  --localip      Specify the IP address for this machine (subnets/private etc)
+  --include      include ONLY paths that include this string
+  --no-compress  by default compress data when uploaded in Cassandra, set to disable compression
 """
-
 
 import argparse
 import sys
