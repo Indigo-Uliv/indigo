@@ -31,6 +31,7 @@ from indigo.util import (
 from indigo.util_graph import (
     get_graph_session,
     gq_add_vertex_user,
+    gq_get_vertex_user
 )
 
 
@@ -53,6 +54,13 @@ class User(Model):
         # remove duplicate
         new_groups = list(set(new_groups))
         self.update(groups=new_groups)
+
+
+    @classmethod
+    def check_graph_users(cls):
+        for u in User.objects.all():
+            if not u.vertex_exists():
+                u.create_vertex()
 
     @classmethod
     @log_with()
@@ -88,8 +96,6 @@ class User(Model):
         user.save()
         
         session = get_graph_session()
-        print """v_new = {}""".format(gq_add_vertex_user(user))
-                             
         session.execute_graph("""v_new = {}""".format(gq_add_vertex_user(user))
                              )
         
@@ -99,6 +105,11 @@ class User(Model):
         # user.uuid is the id of the new user
         Notification.create_user(username, user.uuid, payload)
         return user
+
+    def create_vertex(self):
+        session = get_graph_session()
+        session.execute_graph("""v_new = {}""".format(gq_add_vertex_user(self))
+                             )
 
     def delete(self, username=None):
         from indigo.models import Notification
@@ -208,3 +219,11 @@ class User(Model):
         payload = user.mqtt_payload(pre_state, post_state)
         Notification.update_user(username, user.name, payload)
         return self
+
+    def vertex_exists(self):
+        try:
+            session = get_graph_session()
+            res = session.execute_graph("{}.next()".format(gq_get_vertex_user(self)))
+            return True
+        except:
+            return False

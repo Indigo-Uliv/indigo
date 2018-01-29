@@ -137,14 +137,6 @@ class Collection(object):
                                    """.format(gq_get_vertex_user(user))
         else:
             add_user_edge = ""
-        
-        print """v_parent = {}.next();
-                                 v_new = {};
-                                 v_parent.addEdge('son', v_new);
-                                 {}
-                                 """.format(gq_get_vertex_collection(parent),
-                                            gq_add_vertex_collection(new),
-                                            add_user_edge)
         session = get_graph_session()
         session.execute_graph("""v_parent = {}.next();
                                  v_new = {};

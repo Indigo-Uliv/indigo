@@ -30,7 +30,8 @@ Usage:
   iadmin atg <name> <userlist> ...
   iadmin rfg <name> <userlist> ...
   iadmin rmgroup [<name>]
-  iadmin ingest <user> <group> <path> [--reference --localip <ip> --include <expr> --no-compress] 
+  iadmin ingest <user> <group> <path> [--reference --localip <ip> --include <expr> --no-compress]
+
 
 Options:
   -h --help      Show this screen.

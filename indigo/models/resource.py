@@ -155,7 +155,8 @@ class Resource(object):
                                    """.format(gq_get_vertex_user(user))
         else:
             add_user_edge = ""
-
+            
+        
         session.execute_graph("""v_parent = {}.next();
                                  v_new = {};
                                  v_parent.addEdge('son', v_new);
@@ -490,7 +491,6 @@ class Resource(object):
         from indigo.models import Notification
         pre_state = self.mqtt_get_state()
         kwargs['modified_ts'] = datetime.now()
-        print kwargs
         
         # user_uuid used for Notification
         if 'username' in kwargs:
