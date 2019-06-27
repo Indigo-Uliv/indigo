@@ -1,6 +1,6 @@
-"""Common class for unittest 
+"""Common class for unittest - Project RADON version
 
-Copyright 2015 Archive Analytics Solutions
+Copyright 2019 University of Liverpool
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
