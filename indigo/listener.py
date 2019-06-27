@@ -85,7 +85,7 @@ def on_message(client, userdata, msg):
         operation = path[0]
         script = '/'.join(path[3:])
         payload = json.loads(msg.payload)
-        
+
         try:
             trigger_topic = payload['post']['metadata']['topic']
         except KeyError:
@@ -106,11 +106,11 @@ def on_message(client, userdata, msg):
             del scripts[script]
             os.unlink(os.path.join(script_path, script_file_name))
             return
-        
+
         # TODO: Refactor this and combine it with the scan_script_collection() function.
         resource = Resource.find("{}/{}".format(payload['post']['container'],
                                                 payload['post']['name']))
-        
+
         script_contents = StringIO.StringIO()
 
         for chunk in resource.chunk_content():
@@ -170,23 +170,28 @@ def execute_script(script, topic, payload):
 
     # TODO: Limit the available memory for each instance.
     # TODO: Open up certain ports.
-    docker_cmd = 'docker run --rm --net="host" -i -v {0}:/scripts alloy_python'.format(directory)
-    logger.debug('{0} {1} {2} {3}'.format(docker_cmd, filename, topic, payload))
-    params = docker_cmd.split()
-    params.extend((filename, topic, payload))
-    proc = subprocess.Popen(params,
-                            shell=False,
-                            stdin=subprocess.PIPE,
+    docker_cmd = ['docker',
+                  'run',
+                  '--rm',
+                  '--net', 'host',
+                  '-v', '{0}:/scripts'.format(directory),
+                  'alloy_python',
+                  filename,
+                  topic,
+                  payload]
+
+    proc = subprocess.Popen(docker_cmd,
+                            #shell=False,
+                            #stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE)
-    gevent.spawn_later(MAX_PROC_TIME, kill_container, proc.pid)
-    proc.stdin.write(payload)
-    
-    stdout, stderr = proc.communicate()
+
+    stdout = proc.stdout.read()
+    stderr = proc.stderr.read()
+
     log = ListenerLog.create(script_name="/scripts/{}".format(filename),
                              stdout=stdout,
                              stderr=stderr)
-    proc.stdin.close()
 
 
 def scan_script_collection(directory):
@@ -203,7 +208,7 @@ def scan_script_collection(directory):
     logging.info('{0} scripts found in collection "{1}"'.format(resource_count, directory))
 
     # TODO: Refactor this and combine it with the on_message() function.
-    
+
     for resource_name in child_dataobject:
         resource = Resource.find("{}/{}".format(directory, resource_name))
         script_contents = StringIO.StringIO()

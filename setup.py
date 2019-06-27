@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Setup for Indigo
+"""Setup for Indigo - Project RADON version
 
-Copyright 2015 Archive Analytics Solutions
+Copyright 2019 University of Liverpool
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -29,10 +29,10 @@ setup(
     description='Indigo core library',
     extras_require={},
     long_description="Core library for Indigo development",
-    author='Archive Analytics',
-    maintainer_email='@archiveanalytics.com',
+    author='Jerome Fuselier',
+    maintainer_email='jfuselie@liverpool.ac.uk',
     license="Apache License, Version 2.0",
-    url='https://bitbucket.org/archivea/libindigo',
+    url="https://github.com/Indigo-Uliv/indigo",
     entry_points={
         'console_scripts': [
             "iadmin = indigo.cli:main"

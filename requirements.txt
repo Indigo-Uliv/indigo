@@ -5,3 +5,4 @@ crcmod==1.7
 blessings
 docopt
 paho-mqtt==1.1
+docker
